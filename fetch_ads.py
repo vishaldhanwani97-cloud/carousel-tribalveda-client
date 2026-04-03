@@ -159,9 +159,8 @@ def fetch_for_range(date_preset, since=None, until=None):
         sh_until = until or yesterday_ist.strftime("%Y-%m-%d")
 
     # ── Summary ──────────────────────────────────────────────────
-    # Use link_clicks instead of clicks(all) for funnel accuracy
     s = get(f"{ACCOUNT}/insights", {
-        "fields": "spend,impressions,clicks,ctr,cpm,reach,actions,action_values,frequency",
+        "fields": "spend,impressions,clicks,ctr,cpm,cpc,reach,actions,action_values,frequency",
         **dp
     })
     ins = safe_ins(s.get("data", []))
@@ -172,6 +171,7 @@ def fetch_for_range(date_preset, since=None, until=None):
     meta_revenue = ga(av, "purchase")
     landing = ga(act, "landing_page_view")
     atc = ga(act, "add_to_cart")
+    initiate_checkout = ga(act, "initiate_checkout")
     link_clicks = ga(act, "link_click")
 
     # ── Shopify total revenue (overrides Meta pixel revenue if available) ──
@@ -180,22 +180,31 @@ def fetch_for_range(date_preset, since=None, until=None):
     revenue_source = "shopify" if shopify_total_revenue > 0 else "meta_pixel"
 
     summary = {
-        "spend": spend, "impressions": num(ins.get("impressions", 0)),
+        "reach": num(ins.get("reach", 0)),
+        "impressions": num(ins.get("impressions", 0)),
+        "frequency": flt(ins.get("frequency", 0)),
+        "spend": spend,
         "clicks": num(ins.get("clicks", 0)),
         "link_clicks": num(link_clicks),
-        "ctr": flt(ins.get("ctr", 0)), "cpm": flt(ins.get("cpm", 0)),
-        "reach": num(ins.get("reach", 0)), "conversions": num(purchases),
+        "ctr": flt(ins.get("ctr", 0)),
+        "cpm": flt(ins.get("cpm", 0)),
+        "cpc": flt(ins.get("cpc", 0)),
+        "landing_views": num(landing),
+        "cost_per_landing_view": round(spend / landing, 2) if landing > 0 else 0,
+        "add_to_cart": num(atc),
+        "cost_per_atc": round(spend / atc, 2) if atc > 0 else 0,
+        "initiate_checkout": num(initiate_checkout),
+        "cost_per_initiate_checkout": round(spend / initiate_checkout, 2) if initiate_checkout > 0 else 0,
+        "conversions": num(purchases),
         "revenue": flt(revenue),
         "revenue_source": revenue_source,
         "shopify_orders": shopify_total_orders,
         "roas": round(revenue / spend, 2) if spend > 0 else 0,
         "cac": round(spend / purchases, 2) if purchases > 0 else 0,
-        "landing_views": num(landing), "add_to_cart": num(atc),
-        "frequency": flt(ins.get("frequency", 0)),
     }
 
     # ── Campaigns ────────────────────────────────────────────────
-    cf_fields = "spend,impressions,clicks,ctr,cpm,reach,actions,action_values,purchase_roas,frequency"
+    cf_fields = "spend,impressions,clicks,ctr,cpm,cpc,reach,actions,action_values,purchase_roas,frequency"
     if date_preset:
         cf = f"id,name,status,objective,insights.date_preset({date_preset}){{{cf_fields}}}"
     else:
@@ -207,8 +216,9 @@ def fetch_for_range(date_preset, since=None, until=None):
         ca = ci.get("actions", []); cv = ci.get("action_values", [])
         cs = flt(ci.get("spend", 0)); cp = ga(ca, "purchase")
         cr = ga(cv, "purchase"); cl = ga(ca, "landing_page_view")
-        cc = ga(ca, "add_to_cart"); cimpr = num(ci.get("impressions", 0))
-        # Use link_click for funnel instead of clicks(all)
+        cc = ga(ca, "add_to_cart")
+        cic = ga(ca, "initiate_checkout")
+        cimpr = num(ci.get("impressions", 0))
         clink_clicks = num(ga(ca, "link_click"))
         creach = num(ci.get("reach", 0))
         pr = ci.get("purchase_roas", [])
@@ -219,27 +229,45 @@ def fetch_for_range(date_preset, since=None, until=None):
                 break
         funnel = {
             "reach": creach, "impressions": cimpr,
-            "link_clicks": clink_clicks,  # Link clicks
-            "landing_views": num(cl), "add_to_cart": num(cc), "purchases": num(cp),
+            "link_clicks": clink_clicks,
+            "landing_views": num(cl), "add_to_cart": num(cc),
+            "initiate_checkout": num(cic), "purchases": num(cp),
             "dropoffs": {
                 "impressions_to_link_clicks": round((clink_clicks / cimpr) * 100, 2) if cimpr > 0 else 0,
                 "link_clicks_to_landing": round((cl / clink_clicks) * 100, 1) if clink_clicks > 0 else 0,
                 "landing_to_cart": round((cc / cl) * 100, 1) if cl > 0 else 0,
+                "cart_to_checkout": round((cic / cc) * 100, 1) if cc > 0 else 0,
                 "cart_to_purchase": round((cp / cc) * 100, 1) if cc > 0 else 0,
+                "checkout_to_purchase": round((cp / cic) * 100, 1) if cic > 0 else 0,
             }
         }
         campaigns.append({
-            "id": c["id"], "name": c["name"], "status": c["status"], "objective": c.get("objective", ""),
-            "spend": cs, "impressions": cimpr, "link_clicks": clink_clicks,
-            "ctr": flt(ci.get("ctr", 0)), "cpm": flt(ci.get("cpm", 0)),
-            "reach": creach, "roas": croas, "cac": round(cs / cp, 2) if cp > 0 else 0,
-            "purchases": num(cp), "revenue": flt(cr), "frequency": flt(ci.get("frequency", 0)),
-            "atc": num(cc), "atc_abandon_rate": round((1 - cp / cc) * 100, 1) if cc > 0 else 0,
-            "funnel": funnel
+            "id": c["id"], "name": c["name"], "status": c["status"],
+            "objective": c.get("objective", ""),
+            "reach": creach, "impressions": cimpr,
+            "frequency": flt(ci.get("frequency", 0)),
+            "spend": cs,
+            "link_clicks": clink_clicks,
+            "ctr": flt(ci.get("ctr", 0)),
+            "cpm": flt(ci.get("cpm", 0)),
+            "cpc": flt(ci.get("cpc", 0)),
+            "landing_views": num(cl),
+            "cost_per_landing_view": round(cs / cl, 2) if cl > 0 else 0,
+            "atc": num(cc),
+            "cost_per_atc": round(cs / cc, 2) if cc > 0 else 0,
+            "initiate_checkout": num(cic),
+            "cost_per_initiate_checkout": round(cs / cic, 2) if cic > 0 else 0,
+            "atc_abandon_rate": round((1 - cp / cc) * 100, 1) if cc > 0 else 0,
+            "checkout_abandon_rate": round((1 - cp / cic) * 100, 1) if cic > 0 else 0,
+            "purchases": num(cp),
+            "revenue": flt(cr),
+            "roas": croas,
+            "cac": round(cs / cp, 2) if cp > 0 else 0,
+            "funnel": funnel,
         })
 
     # ── Ad Sets ──────────────────────────────────────────────────
-    as_fields = "spend,impressions,clicks,actions,action_values,frequency"
+    as_fields = "spend,impressions,clicks,ctr,cpm,cpc,actions,action_values,frequency"
     if date_preset:
         af = f"id,name,status,daily_budget,targeting,insights.date_preset({date_preset}){{{as_fields}}}"
     else:
@@ -249,7 +277,11 @@ def fetch_for_range(date_preset, since=None, until=None):
     for a in asets.get("data", []):
         ai = safe_ins(a.get("insights", {}).get("data", []))
         aa = ai.get("actions", [])
-        asp = flt(ai.get("spend", 0)); ap = ga(aa, "purchase"); aatc = ga(aa, "add_to_cart")
+        asp = flt(ai.get("spend", 0))
+        ap = ga(aa, "purchase")
+        aatc = ga(aa, "add_to_cart")
+        aic = ga(aa, "initiate_checkout")
+        al = ga(aa, "landing_page_view")
         alink = num(ga(aa, "link_click"))
         t = a.get("targeting", {})
         g = t.get("genders")
@@ -257,16 +289,29 @@ def fetch_for_range(date_preset, since=None, until=None):
         adsets.append({
             "id": a["id"], "name": a["name"], "status": a["status"],
             "daily_budget": flt(num(a.get("daily_budget", 0)) / 100),
-            "spend": asp, "impressions": num(ai.get("impressions", 0)),
-            "link_clicks": alink, "purchases": num(ap),
-            "cac": round(asp / ap, 2) if ap > 0 else 0,
-            "atc": num(aatc), "atc_abandon_rate": round((1 - ap / aatc) * 100, 1) if aatc > 0 else 0,
+            "spend": asp,
+            "impressions": num(ai.get("impressions", 0)),
             "frequency": flt(ai.get("frequency", 0)),
-            "age": f"{t.get('age_min', 18)}–{t.get('age_max', 65)}", "gender": gender
+            "link_clicks": alink,
+            "ctr": flt(ai.get("ctr", 0)),
+            "cpm": flt(ai.get("cpm", 0)),
+            "cpc": flt(ai.get("cpc", 0)),
+            "landing_views": num(al),
+            "cost_per_landing_view": round(asp / al, 2) if al > 0 else 0,
+            "atc": num(aatc),
+            "cost_per_atc": round(asp / aatc, 2) if aatc > 0 else 0,
+            "initiate_checkout": num(aic),
+            "cost_per_initiate_checkout": round(asp / aic, 2) if aic > 0 else 0,
+            "atc_abandon_rate": round((1 - ap / aatc) * 100, 1) if aatc > 0 else 0,
+            "checkout_abandon_rate": round((1 - ap / aic) * 100, 1) if aic > 0 else 0,
+            "purchases": num(ap),
+            "cac": round(asp / ap, 2) if ap > 0 else 0,
+            "age": f"{t.get('age_min', 18)}–{t.get('age_max', 65)}",
+            "gender": gender,
         })
 
     # ── Ads / Creatives ──────────────────────────────────────────
-    ad_fields = "spend,impressions,clicks,ctr,actions,action_values,frequency"
+    ad_fields = "spend,impressions,clicks,ctr,cpm,cpc,actions,action_values,frequency"
     if date_preset:
         adf = f"id,name,status,adset_id,insights.date_preset({date_preset}){{{ad_fields}}}"
     else:
@@ -275,23 +320,41 @@ def fetch_for_range(date_preset, since=None, until=None):
     ads = []
     for a in ads_raw.get("data", []):
         ai = safe_ins(a.get("insights", {}).get("data", []))
-        aa = ai.get("actions", []); av3 = ai.get("action_values", [])
-        asp2 = flt(ai.get("spend", 0)); ap2 = ga(aa, "purchase")
-        aimpr = num(ai.get("impressions", 0)); alink2 = num(ga(aa, "link_click"))
+        aa = ai.get("actions", [])
+        av3 = ai.get("action_values", [])
+        asp2 = flt(ai.get("spend", 0))
+        ap2 = ga(aa, "purchase")
+        aimpr = num(ai.get("impressions", 0))
+        alink2 = num(ga(aa, "link_click"))
         atc3 = ga(aa, "add_to_cart")
-        thumb_stop = round((alink2 / aimpr) * 100, 2) if aimpr > 0 else 0
-        # Hook rate via video_view action
+        aic2 = ga(aa, "initiate_checkout")
+        al2 = ga(aa, "landing_page_view")
         v3s = num(ga(aa, "video_view"))
         hook_rate = round((v3s / aimpr) * 100, 2) if aimpr > 0 else 0
+        thumb_stop = round((alink2 / aimpr) * 100, 2) if aimpr > 0 else 0
         ads.append({
-            "id": a["id"], "name": a["name"], "status": a["status"], "adset": a.get("adset_id", ""),
-            "spend": asp2, "impressions": aimpr, "link_clicks": alink2,
-            "ctr": flt(ai.get("ctr", 0)), "purchases": num(ap2),
+            "id": a["id"], "name": a["name"], "status": a["status"],
+            "adset": a.get("adset_id", ""),
+            "spend": asp2,
+            "impressions": aimpr,
+            "frequency": flt(ai.get("frequency", 0)),
+            "link_clicks": alink2,
+            "ctr": flt(ai.get("ctr", 0)),
+            "cpm": flt(ai.get("cpm", 0)),
+            "cpc": flt(ai.get("cpc", 0)),
+            "landing_views": num(al2),
+            "cost_per_landing_view": round(asp2 / al2, 2) if al2 > 0 else 0,
+            "atc": num(atc3),
+            "cost_per_atc": round(asp2 / atc3, 2) if atc3 > 0 else 0,
+            "initiate_checkout": num(aic2),
+            "cost_per_initiate_checkout": round(asp2 / aic2, 2) if aic2 > 0 else 0,
+            "purchases": num(ap2),
             "cac": round(asp2 / ap2, 2) if ap2 > 0 else 0,
-            "atc": num(atc3), "frequency": flt(ai.get("frequency", 0)),
-            "hook_rate": hook_rate, "thumb_stop_rate": thumb_stop,
             "revenue": flt(ga(av3, "purchase")),
             "roas": round(flt(ga(av3, "purchase")) / asp2, 2) if asp2 > 0 else 0,
+            "hook_rate": hook_rate,
+            "thumb_stop_rate": thumb_stop,
+            "video_views_3s": v3s,
         })
 
     # ── Audience age/gender ──────────────────────────────────────
