@@ -91,11 +91,13 @@ def fetch_shopify_revenue_by_province(since, until):
     return province_revenue
 
 def fetch_shopify_total_revenue(since, until):
-    """Fetch Total Sales from Shopify excluding taxes — matches Shopify Finance Summary"""
+    """Fetch Total Sales matching Shopify Finance Summary
+    Total Sales = sum(total_price) - sum(total_tax) for non-voided/refunded orders"""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
     print(f"  Fetching Shopify total sales ({since} to {until} IST)...")
     total_revenue = 0.0
+    total_tax     = 0.0
     total_orders  = 0
     min_id = None
 
@@ -105,7 +107,7 @@ def fetch_shopify_total_revenue(since, until):
             "created_at_min": f"{since}T00:00:00+05:30",
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
-            "fields": "id,subtotal_price,total_shipping_price_set,financial_status",
+            "fields": "id,total_price,total_tax,financial_status",
             "order": "id asc",
         }
         if min_id:
@@ -120,22 +122,19 @@ def fetch_shopify_total_revenue(since, until):
             status = order.get("financial_status", "")
             if status in ("voided", "refunded"):
                 continue
-            # Total Sales = subtotal (after discounts) + shipping (no taxes)
-            subtotal = flt(order.get("subtotal_price", 0))
-            shipping = flt(
-                order.get("total_shipping_price_set", {})
-                    .get("shop_money", {})
-                    .get("amount", 0)
-            )
-            total_revenue += subtotal + shipping
+            total_revenue += flt(order.get("total_price", 0))
+            total_tax     += flt(order.get("total_tax", 0))
             total_orders  += 1
 
         min_id = orders[-1].get("id")
         if len(orders) < 250:
             break
 
-    print(f"  Shopify total sales: Rs.{round(total_revenue, 2)} from {total_orders} orders")
-    return round(total_revenue, 2), total_orders
+    # Total Sales (Shopify Finance) = total_price - total_tax
+    net = round(total_revenue - total_tax, 2)
+    print(f"  Shopify total sales: Rs.{net} from {total_orders} orders "
+          f"(gross Rs.{round(total_revenue,2)} - tax Rs.{round(total_tax,2)})")
+    return net, total_orders
 
 def fetch_for_range(date_preset, since=None, until=None):
     dp = {"date_preset": date_preset} if date_preset else {"time_range": json.dumps({"since": since, "until": until})}
