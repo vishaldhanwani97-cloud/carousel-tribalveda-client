@@ -102,11 +102,10 @@ def fetch_shopify_total_revenue(since, until):
     while True:
         params = {
             "status": "any",
-            "financial_status": "paid",
             "created_at_min": f"{since}T00:00:00+05:30",
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
-            "fields": "total_price,id",
+            "fields": "total_price,id,financial_status",
             "order": "id asc",
         }
         if min_id:
@@ -118,13 +117,13 @@ def fetch_shopify_total_revenue(since, until):
             break
 
         for order in orders:
-            total_revenue += flt(order.get("total_price", 0))
-            total_orders += 1
+            # Match Shopify dashboard — include all except voided/refunded
+            status = order.get("financial_status", "")
+            if status not in ("voided", "refunded"):
+                total_revenue += flt(order.get("total_price", 0))
+                total_orders += 1
 
-        # Use last order ID for next page
         min_id = orders[-1].get("id")
-
-        # If we got less than 250, we've reached the last page
         if len(orders) < 250:
             break
 
