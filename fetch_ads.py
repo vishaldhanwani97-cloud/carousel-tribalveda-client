@@ -94,10 +94,10 @@ def fetch_shopify_total_revenue(since, until):
     """Fetch total Shopify revenue with full pagination to match Shopify dashboard"""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
-    print("  Fetching Shopify total revenue (all pages)...")
+    print(f"  Fetching Shopify total revenue ({since} to {until} IST)...")
     total_revenue = 0.0
     total_orders = 0
-    last_id = None
+    min_id = None
 
     while True:
         params = {
@@ -107,9 +107,10 @@ def fetch_shopify_total_revenue(since, until):
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
             "fields": "total_price,id",
+            "order": "id asc",
         }
-        if last_id:
-            params["since_id"] = last_id
+        if min_id:
+            params["since_id"] = min_id
 
         result = shopify_get("orders", params)
         orders = result.get("orders", [])
@@ -119,7 +120,9 @@ def fetch_shopify_total_revenue(since, until):
         for order in orders:
             total_revenue += flt(order.get("total_price", 0))
             total_orders += 1
-            last_id = order.get("id", last_id)
+
+        # Use last order ID for next page
+        min_id = orders[-1].get("id")
 
         # If we got less than 250, we've reached the last page
         if len(orders) < 250:
@@ -133,8 +136,8 @@ def fetch_for_range(date_preset, since=None, until=None):
     label = date_preset or f"{since} to {until}"
     print(f"  Range: {label}")
 
-    # Determine since/until for Shopify calls
-    today = datetime.utcnow()
+    # Determine since/until for Shopify calls — use IST (UTC+5:30)
+    today = datetime.utcnow() + timedelta(hours=5, minutes=30)
     if date_preset == "last_7d":
         sh_since = (today - timedelta(days=7)).strftime("%Y-%m-%d")
         sh_until = today.strftime("%Y-%m-%d")
