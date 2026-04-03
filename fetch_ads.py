@@ -91,8 +91,7 @@ def fetch_shopify_revenue_by_province(since, until):
     return province_revenue
 
 def fetch_shopify_total_revenue(since, until):
-    """Fetch Total Sales from Shopify = total_price of all non-voided orders
-    Matches 'Total sales' number shown in Shopify Finance Summary"""
+    """Fetch Total Sales from Shopify excluding taxes — matches Shopify Finance Summary"""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
     print(f"  Fetching Shopify total sales ({since} to {until} IST)...")
@@ -106,7 +105,7 @@ def fetch_shopify_total_revenue(since, until):
             "created_at_min": f"{since}T00:00:00+05:30",
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
-            "fields": "id,total_price,financial_status",
+            "fields": "id,subtotal_price,total_shipping_price_set,financial_status",
             "order": "id asc",
         }
         if min_id:
@@ -118,11 +117,18 @@ def fetch_shopify_total_revenue(since, until):
             break
 
         for order in orders:
-            # Skip voided and fully refunded orders to match Shopify Total Sales
             status = order.get("financial_status", "")
-            if status not in ("voided", "refunded"):
-                total_revenue += flt(order.get("total_price", 0))
-                total_orders  += 1
+            if status in ("voided", "refunded"):
+                continue
+            # Total Sales = subtotal (after discounts) + shipping (no taxes)
+            subtotal = flt(order.get("subtotal_price", 0))
+            shipping = flt(
+                order.get("total_shipping_price_set", {})
+                    .get("shop_money", {})
+                    .get("amount", 0)
+            )
+            total_revenue += subtotal + shipping
+            total_orders  += 1
 
         min_id = orders[-1].get("id")
         if len(orders) < 250:
