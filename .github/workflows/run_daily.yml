@@ -2,8 +2,11 @@ name: Fetch Ads Data Daily — Carousel Media
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 1 AM UTC = 6:30 AM IST
-  workflow_dispatch:        # Manual trigger from GitHub UI
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   fetch-data:
@@ -12,13 +15,14 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ── Fetch Meta Ads data ───────────────────────────────────────
       - name: Fetch Meta Ads data
         env:
           META_ACCESS_TOKEN:    ${{ secrets.META_ACCESS_TOKEN }}
@@ -28,9 +32,8 @@ jobs:
         run: |
           echo "Running Meta Ads fetch..."
           python fetch_ads.py
-        continue-on-error: true   # Don't fail whole job if Meta fails
+        continue-on-error: true
 
-      # ── Fetch Google Ads data ─────────────────────────────────────
       - name: Fetch Google Ads data
         env:
           GOOGLE_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_DEVELOPER_TOKEN }}
@@ -41,28 +44,14 @@ jobs:
         run: |
           echo "Running Google Ads fetch..."
           python fetch_google.py
-        continue-on-error: true   # Don't fail whole job if Google not configured
+        continue-on-error: true
 
-      # ── Commit and push all updated data files ────────────────────
       - name: Commit updated data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data_7d.json data_28d.json data_month.json data.json \
-                  google_7d.json google_28d.json google_month.json \
-                  2>/dev/null || true
+          git add -A
           git diff --staged --quiet || git commit -m "Auto-update: $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push
-        continue-on-error: true
-
-      # ── Print summary ─────────────────────────────────────────────
-      - name: Summary
-        run: |
-          echo "=== Fetch Summary ==="
-          for f in data_28d.json google_28d.json; do
-            if [ -f "$f" ]; then
-              echo "✓ $f — $(python3 -c "import json; d=json.load(open('$f')); print(f\"{len(d.get('campaigns',[]))} campaigns\")")"
-            else
-              echo "✗ $f — not generated"
-            fi
-          done
+          git push origin HEAD:main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
