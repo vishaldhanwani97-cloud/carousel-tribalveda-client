@@ -136,19 +136,21 @@ def fetch_for_range(date_preset, since=None, until=None):
     print(f"  Range: {label}")
 
     # Determine since/until for Shopify calls — use IST (UTC+5:30)
-    today = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    # Use yesterday as end date to ensure complete day data only
+    today_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    yesterday_ist = today_ist - timedelta(days=1)
     if date_preset == "last_7d":
-        sh_since = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-        sh_until = today.strftime("%Y-%m-%d")
+        sh_since = (yesterday_ist - timedelta(days=6)).strftime("%Y-%m-%d")
+        sh_until = yesterday_ist.strftime("%Y-%m-%d")
     elif date_preset == "last_28d":
-        sh_since = (today - timedelta(days=28)).strftime("%Y-%m-%d")
-        sh_until = today.strftime("%Y-%m-%d")
+        sh_since = (yesterday_ist - timedelta(days=27)).strftime("%Y-%m-%d")
+        sh_until = yesterday_ist.strftime("%Y-%m-%d")
     elif date_preset == "this_month":
-        sh_since = today.replace(day=1).strftime("%Y-%m-%d")
-        sh_until = today.strftime("%Y-%m-%d")
+        sh_since = today_ist.replace(day=1).strftime("%Y-%m-%d")
+        sh_until = yesterday_ist.strftime("%Y-%m-%d")
     else:
-        sh_since = since or (today - timedelta(days=28)).strftime("%Y-%m-%d")
-        sh_until = until or today.strftime("%Y-%m-%d")
+        sh_since = since or (yesterday_ist - timedelta(days=27)).strftime("%Y-%m-%d")
+        sh_until = until or yesterday_ist.strftime("%Y-%m-%d")
 
     # ── Summary ──────────────────────────────────────────────────
     # Use link_clicks instead of clicks(all) for funnel accuracy
