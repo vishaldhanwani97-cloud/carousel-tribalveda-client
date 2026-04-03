@@ -91,12 +91,13 @@ def fetch_shopify_revenue_by_province(since, until):
     return province_revenue
 
 def fetch_shopify_total_revenue(since, until):
-    """Fetch total Shopify revenue with full pagination to match Shopify dashboard"""
+    """Fetch Total Sales from Shopify = total_price of all non-voided orders
+    Matches 'Total sales' number shown in Shopify Finance Summary"""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
-    print(f"  Fetching Shopify total revenue ({since} to {until} IST)...")
+    print(f"  Fetching Shopify total sales ({since} to {until} IST)...")
     total_revenue = 0.0
-    total_orders = 0
+    total_orders  = 0
     min_id = None
 
     while True:
@@ -105,7 +106,7 @@ def fetch_shopify_total_revenue(since, until):
             "created_at_min": f"{since}T00:00:00+05:30",
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
-            "fields": "total_price,id,financial_status",
+            "fields": "id,total_price,financial_status",
             "order": "id asc",
         }
         if min_id:
@@ -117,17 +118,16 @@ def fetch_shopify_total_revenue(since, until):
             break
 
         for order in orders:
-            # Match Shopify dashboard — include all except voided/refunded
-            status = order.get("financial_status", "")
-            if status not in ("voided", "refunded"):
+            # Skip only voided orders — matches Shopify's Total Sales calculation
+            if order.get("financial_status") != "voided":
                 total_revenue += flt(order.get("total_price", 0))
-                total_orders += 1
+                total_orders  += 1
 
         min_id = orders[-1].get("id")
         if len(orders) < 250:
             break
 
-    print(f"  Shopify total: Rs.{round(total_revenue, 2)} from {total_orders} orders")
+    print(f"  Shopify total sales: Rs.{round(total_revenue, 2)} from {total_orders} orders")
     return round(total_revenue, 2), total_orders
 
 def fetch_for_range(date_preset, since=None, until=None):
