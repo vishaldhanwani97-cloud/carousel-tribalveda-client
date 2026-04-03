@@ -90,6 +90,29 @@ def fetch_shopify_revenue_by_province(since, until):
         break
     return province_revenue
 
+def fetch_shopify_total_revenue(since, until):
+    """Fetch total Shopify revenue and order count for the date range"""
+    if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
+        return 0.0, 0
+    print("  Fetching Shopify total revenue...")
+    total_revenue = 0.0
+    total_orders = 0
+    params = {
+        "status": "any",
+        "financial_status": "paid",
+        "created_at_min": f"{since}T00:00:00+05:30",
+        "created_at_max": f"{until}T23:59:59+05:30",
+        "limit": 250,
+        "fields": "total_price,id"
+    }
+    result = shopify_get("orders", params)
+    orders = result.get("orders", [])
+    for order in orders:
+        total_revenue += flt(order.get("total_price", 0))
+        total_orders += 1
+    print(f"  Shopify total: ₹{round(total_revenue, 2)} from {total_orders} orders")
+    return round(total_revenue, 2), total_orders
+
 def fetch_for_range(date_preset, since=None, until=None):
     dp = {"date_preset": date_preset} if date_preset else {"time_range": json.dumps({"since": since, "until": until})}
     label = date_preset or f"{since} to {until}"
@@ -121,17 +144,25 @@ def fetch_for_range(date_preset, since=None, until=None):
     av = ins.get("action_values", [])
     spend = flt(ins.get("spend", 0))
     purchases = ga(act, "purchase")
-    revenue = ga(av, "purchase")
+    meta_revenue = ga(av, "purchase")
     landing = ga(act, "landing_page_view")
     atc = ga(act, "add_to_cart")
-    link_clicks = ga(act, "link_click")  # Link clicks for funnel
+    link_clicks = ga(act, "link_click")
+
+    # ── Shopify total revenue (overrides Meta pixel revenue if available) ──
+    shopify_total_revenue, shopify_total_orders = fetch_shopify_total_revenue(sh_since, sh_until)
+    revenue = shopify_total_revenue if shopify_total_revenue > 0 else meta_revenue
+    revenue_source = "shopify" if shopify_total_revenue > 0 else "meta_pixel"
+
     summary = {
         "spend": spend, "impressions": num(ins.get("impressions", 0)),
         "clicks": num(ins.get("clicks", 0)),
-        "link_clicks": num(link_clicks),  # Added link clicks
+        "link_clicks": num(link_clicks),
         "ctr": flt(ins.get("ctr", 0)), "cpm": flt(ins.get("cpm", 0)),
         "reach": num(ins.get("reach", 0)), "conversions": num(purchases),
         "revenue": flt(revenue),
+        "revenue_source": revenue_source,
+        "shopify_orders": shopify_total_orders,
         "roas": round(revenue / spend, 2) if spend > 0 else 0,
         "cac": round(spend / purchases, 2) if purchases > 0 else 0,
         "landing_views": num(landing), "add_to_cart": num(atc),
