@@ -118,8 +118,9 @@ def fetch_shopify_total_revenue(since, until):
             break
 
         for order in orders:
-            # Skip only voided orders — matches Shopify's Total Sales calculation
-            if order.get("financial_status") != "voided":
+            # Skip voided and fully refunded orders to match Shopify Total Sales
+            status = order.get("financial_status", "")
+            if status not in ("voided", "refunded"):
                 total_revenue += flt(order.get("total_price", 0))
                 total_orders  += 1
 
