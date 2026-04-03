@@ -91,26 +91,41 @@ def fetch_shopify_revenue_by_province(since, until):
     return province_revenue
 
 def fetch_shopify_total_revenue(since, until):
-    """Fetch total Shopify revenue and order count for the date range"""
+    """Fetch total Shopify revenue with full pagination to match Shopify dashboard"""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
-    print("  Fetching Shopify total revenue...")
+    print("  Fetching Shopify total revenue (all pages)...")
     total_revenue = 0.0
     total_orders = 0
-    params = {
-        "status": "any",
-        "financial_status": "paid",
-        "created_at_min": f"{since}T00:00:00+05:30",
-        "created_at_max": f"{until}T23:59:59+05:30",
-        "limit": 250,
-        "fields": "total_price,id"
-    }
-    result = shopify_get("orders", params)
-    orders = result.get("orders", [])
-    for order in orders:
-        total_revenue += flt(order.get("total_price", 0))
-        total_orders += 1
-    print(f"  Shopify total: ₹{round(total_revenue, 2)} from {total_orders} orders")
+    last_id = None
+
+    while True:
+        params = {
+            "status": "any",
+            "financial_status": "paid",
+            "created_at_min": f"{since}T00:00:00+05:30",
+            "created_at_max": f"{until}T23:59:59+05:30",
+            "limit": 250,
+            "fields": "total_price,id",
+        }
+        if last_id:
+            params["since_id"] = last_id
+
+        result = shopify_get("orders", params)
+        orders = result.get("orders", [])
+        if not orders:
+            break
+
+        for order in orders:
+            total_revenue += flt(order.get("total_price", 0))
+            total_orders += 1
+            last_id = order.get("id", last_id)
+
+        # If we got less than 250, we've reached the last page
+        if len(orders) < 250:
+            break
+
+    print(f"  Shopify total: Rs.{round(total_revenue, 2)} from {total_orders} orders")
     return round(total_revenue, 2), total_orders
 
 def fetch_for_range(date_preset, since=None, until=None):
