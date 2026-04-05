@@ -91,8 +91,9 @@ def fetch_shopify_revenue_by_province(since, until):
     return province_revenue
 
 def fetch_shopify_total_revenue(since, until):
-    """Fetch Gross Sales = sum of total_price for all non-voided orders.
-    Matches the Gross Sales line in Shopify Finance Summary."""
+    """Fetch Gross Sales matching Shopify Analytics dashboard.
+    = sum of total_price for all orders that are NOT voided or cancelled.
+    Shopify excludes cancelled orders from Gross Sales."""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
     print(f"  Fetching Shopify Gross Sales ({since} to {until} IST)...")
@@ -106,7 +107,7 @@ def fetch_shopify_total_revenue(since, until):
             "created_at_min": f"{since}T00:00:00+05:30",
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
-            "fields": "id,total_price,financial_status",
+            "fields": "id,total_price,financial_status,cancel_reason",
             "order": "id asc",
         }
         if min_id:
@@ -118,7 +119,10 @@ def fetch_shopify_total_revenue(since, until):
             break
 
         for order in orders:
+            # Shopify Gross Sales excludes voided and cancelled orders
             if order.get("financial_status") == "voided":
+                continue
+            if order.get("cancel_reason") is not None:
                 continue
             gross_sales += flt(order.get("total_price", 0))
             total_orders += 1
@@ -136,21 +140,21 @@ def fetch_for_range(date_preset, since=None, until=None):
     label = date_preset or f"{since} to {until}"
     print(f"  Range: {label}")
 
-    # Determine since/until for Shopify calls — use IST (UTC+5:30)
-    # Use yesterday as end date to ensure complete day data only
+    # Date ranges in IST — match Meta API presets exactly
     today_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     yesterday_ist = today_ist - timedelta(days=1)
     if date_preset == "last_7d":
-        sh_since = (yesterday_ist - timedelta(days=6)).strftime("%Y-%m-%d")
+        # Meta last_7d = last 7 complete days (not including today)
+        sh_since = (today_ist - timedelta(days=7)).strftime("%Y-%m-%d")
         sh_until = yesterday_ist.strftime("%Y-%m-%d")
     elif date_preset == "last_28d":
-        sh_since = (yesterday_ist - timedelta(days=27)).strftime("%Y-%m-%d")
+        sh_since = (today_ist - timedelta(days=28)).strftime("%Y-%m-%d")
         sh_until = yesterday_ist.strftime("%Y-%m-%d")
     elif date_preset == "this_month":
         sh_since = today_ist.replace(day=1).strftime("%Y-%m-%d")
-        sh_until = yesterday_ist.strftime("%Y-%m-%d")
+        sh_until = today_ist.strftime("%Y-%m-%d")
     else:
-        sh_since = since or (yesterday_ist - timedelta(days=27)).strftime("%Y-%m-%d")
+        sh_since = since or (today_ist - timedelta(days=28)).strftime("%Y-%m-%d")
         sh_until = until or yesterday_ist.strftime("%Y-%m-%d")
 
     # ── Summary ──────────────────────────────────────────────────
@@ -190,12 +194,12 @@ def fetch_for_range(date_preset, since=None, until=None):
         "cost_per_atc": round(spend / atc, 2) if atc > 0 else 0,
         "initiate_checkout": num(initiate_checkout),
         "cost_per_initiate_checkout": round(spend / initiate_checkout, 2) if initiate_checkout > 0 else 0,
-        "conversions": num(purchases),
+        "conversions": shopify_total_orders if shopify_total_orders > 0 else num(purchases),
         "revenue": flt(revenue),
         "revenue_source": revenue_source,
         "shopify_orders": shopify_total_orders,
         "roas": round(revenue / spend, 2) if spend > 0 else 0,
-        "cac": round(spend / purchases, 2) if purchases > 0 else 0,
+        "cac": round(spend / shopify_total_orders, 2) if shopify_total_orders > 0 else round(spend / purchases, 2) if purchases > 0 else 0,
     }
 
     # ── Campaigns ────────────────────────────────────────────────
@@ -468,7 +472,7 @@ def fetch_for_range(date_preset, since=None, until=None):
     hours.sort(key=lambda x: int(x["hour"]) if str(x["hour"]).isdigit() else 0)
 
     # ── Budget pacing ─────────────────────────────────────────────
-    today_dt = datetime.utcnow()
+    today_dt = datetime.utcnow() + timedelta(hours=5, minutes=30)  # IST
     days_elapsed = today_dt.day
     days_remaining = 30 - days_elapsed
     daily_avg = round(summary["spend"] / days_elapsed, 2) if days_elapsed > 0 else 0
@@ -487,7 +491,7 @@ def fetch_for_range(date_preset, since=None, until=None):
         "spendTrend": trend, "audienceAge": sorted(age_map.values(), key=lambda x: x["group"]),
         "audienceGender": {"male": round(gmap["male"] / total_g * 100), "female": round(gmap["female"] / total_g * 100)},
         "geography": geography, "placements": placements, "hours": hours, "pacing": pacing,
-        "lastUpdated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "lastUpdated": (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d %H:%M IST"),
         "dateRange": date_preset or f"{since} to {until}",
         "shopify_connected": bool(SHOPIFY_TOKEN and SHOPIFY_STORE)
     }
