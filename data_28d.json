@@ -2455,8 +2455,8 @@
     },
     {
       "day": "04-04",
-      "spend": 65025.24,
-      "impressions": 682993,
+      "spend": 65025.25,
+      "impressions": 682995,
       "link_clicks": 4470,
       "purchases": 114,
       "revenue": 105281.0,
@@ -2988,7 +2988,7 @@
       "platform": "facebook",
       "position": "feed",
       "spend": 556923.01,
-      "impressions": 2911510,
+      "impressions": 2911511,
       "clicks": 60814,
       "reach": 1247667,
       "purchases": 818,
@@ -3001,7 +3001,7 @@
       "platform": "instagram",
       "position": "feed",
       "spend": 510607.47,
-      "impressions": 4375969,
+      "impressions": 4375970,
       "clicks": 25001,
       "reach": 2715949,
       "purchases": 761,
@@ -3013,7 +3013,7 @@
     {
       "platform": "instagram",
       "position": "instagram_reels",
-      "spend": 480097.92,
+      "spend": 480097.93,
       "impressions": 6312563,
       "clicks": 34269,
       "reach": 3638256,
@@ -3432,7 +3432,7 @@
     {
       "hour": "18",
       "spend": 31772.39,
-      "impressions": 252828,
+      "impressions": 252829,
       "clicks": 3080,
       "purchases": 52,
       "cac": 611.01
@@ -3447,8 +3447,8 @@
     },
     {
       "hour": "20",
-      "spend": 30061.94,
-      "impressions": 254001,
+      "spend": 30061.95,
+      "impressions": 254002,
       "clicks": 3175,
       "purchases": 52,
       "cac": 578.11
@@ -3488,7 +3488,7 @@
     "projected_purchases": 23088,
     "projected_cac": 567.3
   },
-  "lastUpdated": "2026-04-05 18:51 IST",
+  "lastUpdated": "2026-04-05 18:55 IST",
   "dateRange": "last_28d",
   "shopify_connected": true
 }
