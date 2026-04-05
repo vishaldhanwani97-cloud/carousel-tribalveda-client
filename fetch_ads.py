@@ -5,12 +5,9 @@ TOKEN = os.environ["META_ACCESS_TOKEN"]
 ACCOUNT = os.environ["META_AD_ACCOUNT_ID"]
 BASE = "https://graph.facebook.com/v19.0"
 
+# Shopify credentials - add these as GitHub Secrets
 SHOPIFY_TOKEN = os.environ.get("SHOPIFY_ADMIN_TOKEN", "")
 SHOPIFY_STORE = os.environ.get("SHOPIFY_STORE_URL", "")  # e.g. your-store.myshopify.com
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def get(endpoint, params={}):
     p = dict(params)
@@ -28,36 +25,16 @@ def get(endpoint, params={}):
 
 def shopify_get(endpoint, params={}):
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
-        return {}
+        return {"orders": []}
     qs = urllib.parse.urlencode(params)
-    url = f"https://{SHOPIFY_STORE}/admin/api/2024-10/{endpoint}.json?{qs}"
+    url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}.json?{qs}"
     req = urllib.request.Request(url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
     try:
         with urllib.request.urlopen(req) as r:
             return json.loads(r.read())
     except Exception as e:
         print(f"  Shopify warning: {endpoint} — {e}")
-        return {}
-
-def shopify_graphql(query):
-    """Run a GraphQL query against Shopify Admin API"""
-    if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
-        return {}
-    url = f"https://{SHOPIFY_STORE}/admin/api/2024-10/graphql.json"
-    data = json.dumps({"query": query}).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data,
-        headers={
-            "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-            "Content-Type": "application/json",
-        }
-    )
-    try:
-        with urllib.request.urlopen(req) as r:
-            return json.loads(r.read())
-    except Exception as e:
-        print(f"  Shopify GraphQL warning: {e}")
-        return {}
+        return {"orders": []}
 
 def flt(v):
     try: return round(float(v), 2)
@@ -72,24 +49,54 @@ def ga(actions, t):
     return next((flt(a.get("value", 0)) for a in actions if a.get("action_type") == t), 0)
 
 def safe_ins(data_list):
+    """Safely get first insight row — returns empty dict if no data"""
     if not data_list:
         return {}
     return data_list[0] if data_list else {}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SHOPIFY: TOTAL SALES
-# Matches Shopify Finance Summary "Total Sales" line exactly:
-#   total_price (includes tax + shipping) minus actual refund transactions
-#   Only voided orders are fully excluded
-# ─────────────────────────────────────────────────────────────────────────────
+def fetch_shopify_revenue_by_province(since, until):
+    """Fetch Shopify orders and group revenue by Indian state/province"""
+    if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
+        return {}
+    print("  Fetching Shopify orders for geography revenue...")
+    province_revenue = {}
+    page_info = None
+    while True:
+        params = {
+            "status": "any",
+            "financial_status": "paid",
+            "created_at_min": f"{since}T00:00:00+05:30",
+            "created_at_max": f"{until}T23:59:59+05:30",
+            "limit": 250,
+            "fields": "total_price,shipping_address"
+        }
+        if page_info:
+            params["page_info"] = page_info
+        result = shopify_get("orders", params)
+        orders = result.get("orders", [])
+        if not orders:
+            break
+        for order in orders:
+            addr = order.get("shipping_address") or {}
+            province = addr.get("province") or addr.get("city") or "Unknown"
+            revenue = flt(order.get("total_price", 0))
+            if province not in province_revenue:
+                province_revenue[province] = {"revenue": 0, "orders": 0}
+            province_revenue[province]["revenue"] += revenue
+            province_revenue[province]["orders"] += 1
+        if len(orders) < 250:
+            break
+        # Shopify pagination via link header not easily accessible here, break after first page
+        break
+    return province_revenue
 
 def fetch_shopify_total_revenue(since, until):
+    """Fetch Gross Sales = sum of total_price for all non-voided orders.
+    Matches the Gross Sales line in Shopify Finance Summary."""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return 0.0, 0
-    print(f"  Fetching Shopify Total Sales ({since} → {until} IST)...")
-
-    total_sales = 0.0
-    total_refunded = 0.0
+    print(f"  Fetching Shopify Gross Sales ({since} to {until} IST)...")
+    gross_sales = 0.0
     total_orders = 0
     min_id = None
 
@@ -99,7 +106,7 @@ def fetch_shopify_total_revenue(since, until):
             "created_at_min": f"{since}T00:00:00+05:30",
             "created_at_max": f"{until}T23:59:59+05:30",
             "limit": 250,
-            "fields": "id,total_price,financial_status,refunds",
+            "fields": "id,total_price,financial_status",
             "order": "id asc",
         }
         if min_id:
@@ -111,256 +118,42 @@ def fetch_shopify_total_revenue(since, until):
             break
 
         for order in orders:
-            status = order.get("financial_status", "")
-            if status == "voided":
-                continue  # Only skip voided
-
-            total_sales += flt(order.get("total_price", 0))
+            if order.get("financial_status") == "voided":
+                continue
+            gross_sales += flt(order.get("total_price", 0))
             total_orders += 1
 
-            # Subtract actual refunded amounts (handles partial + full refunds)
-            if status in ("refunded", "partially_refunded"):
-                for refund in order.get("refunds", []):
-                    for txn in refund.get("transactions", []):
-                        if txn.get("kind") == "refund" and txn.get("status") == "success":
-                            total_refunded += flt(txn.get("amount", 0))
-
         min_id = orders[-1].get("id")
         if len(orders) < 250:
             break
 
-    total = round(total_sales - total_refunded, 2)
-    print(f"  Total Sales: ₹{total} from {total_orders} orders "
-          f"(gross ₹{round(total_sales,2)} - refunds ₹{round(total_refunded,2)})")
-    return total, total_orders
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SHOPIFY: ANALYTICS — Sessions, ATC, Reached Checkout
-#
-# Shopify exposes store funnel via the Analytics API.
-# This requires the "read_analytics" scope on your Shopify Admin token.
-#
-# If your token doesn't have this scope, sessions/ATC will be None
-# and the dashboard will fall back to Meta pixel funnel data.
-#
-# To enable: regenerate your Shopify Admin token and add "read_analytics" scope.
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_shopify_analytics(since, until):
-    """
-    Fetch store funnel from Shopify.
-    shopifyqlQuery is Shopify Plus only — for Basic/Advanced plans we use:
-    1. Shopify Analytics REST API (/admin/api/.../analytics/reports)
-    2. Abandoned checkouts API for checkout reach
-    3. Orders API fallback for purchases
-    """
-    print(f"  Fetching Shopify Analytics ({since} → {until})...")
-    result = {
-        "sessions": None,
-        "add_to_cart": None,
-        "reached_checkout": None,
-        "purchases": 0,
-        "abandoned_checkouts": 0,
-        "source": "meta_pixel_fallback",
-    }
-
-    # ── Method 1: Shopify Analytics REST (non-Plus stores) ───────
-    # The correct endpoint for session/funnel data is:
-    # GET /admin/api/VERSION/analytics/reports.json?name=sessions_by_traffic_source
-    # Available on Basic+ plans with read_analytics scope
-    analytics_endpoints = [
-        ("sessions_by_traffic_source", "sessions"),
-        ("conversion_analysis",        "conversion"),
-        ("store_sessions_by_device",   "device_sessions"),
-    ]
-    for report_name, label in analytics_endpoints:
-        try:
-            url = (f"https://{SHOPIFY_STORE}/admin/api/2024-10/analytics/reports.json"
-                   f"?name={report_name}&date_min={since}&date_max={until}")
-            req = urllib.request.Request(
-                url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN}
-            )
-            with urllib.request.urlopen(req) as r:
-                data = json.loads(r.read())
-            print(f"    {label} report keys: {list(data.keys())}")
-            # Parse sessions from response
-            if "result" in data:
-                rows = data["result"].get("data", {}).get("rows", [])
-                print(f"    {label} rows: {rows[:3]}")
-        except Exception as e:
-            print(f"    {label} ({report_name}): {e}")
-
-    # ── Method 2: GraphQL — check what's available on this store ──
-    introspect_query = """
-    {
-      __type(name: "QueryRoot") {
-        fields {
-          name
-          description
-        }
-      }
-    }
-    """
-    try:
-        intro_result = shopify_graphql(introspect_query)
-        fields = (intro_result.get("data", {})
-                  .get("__type", {})
-                  .get("fields", []))
-        analytics_fields = [f["name"] for f in fields
-                            if any(k in f["name"].lower()
-                                   for k in ["analytic", "session", "report", "shopifyql"])]
-        print(f"    Available analytics GraphQL fields: {analytics_fields or 'none found'}")
-    except Exception as e:
-        print(f"    GraphQL introspection: {e}")
-
-    # ── Method 3: Abandoned checkouts → Reached Checkout ─────────
-    try:
-        # Page through all abandoned checkouts in range
-        abandoned = 0
-        since_id = None
-        while True:
-            params = {
-                "created_at_min": f"{since}T00:00:00+05:30",
-                "created_at_max": f"{until}T23:59:59+05:30",
-                "status": "open",
-                "limit": 250,
-            }
-            if since_id:
-                params["since_id"] = since_id
-            co = shopify_get("checkouts", params)
-            checkouts = co.get("checkouts", [])
-            if not checkouts:
-                break
-            abandoned += len(checkouts)
-            since_id = checkouts[-1].get("id")
-            if len(checkouts) < 250:
-                break
-        result["abandoned_checkouts"] = abandoned
-        print(f"    Abandoned checkouts: {abandoned}")
-    except Exception as e:
-        print(f"    Abandoned checkouts error: {e}")
-
-    # ── Method 4: Purchases from Orders API (always accurate) ─────
-    total_purchases = 0
-    min_id = None
-    while True:
-        params = {
-            "status": "any",
-            "created_at_min": f"{since}T00:00:00+05:30",
-            "created_at_max": f"{until}T23:59:59+05:30",
-            "limit": 250,
-            "fields": "id,financial_status",
-            "order": "id asc",
-        }
-        if min_id:
-            params["since_id"] = min_id
-        orders = shopify_get("orders", params).get("orders", [])
-        if not orders:
-            break
-        for order in orders:
-            if order.get("financial_status") != "voided":
-                total_purchases += 1
-        min_id = orders[-1].get("id")
-        if len(orders) < 250:
-            break
-
-    result["purchases"] = total_purchases
-    result["reached_checkout"] = total_purchases + result["abandoned_checkouts"]
-    print(f"    Purchases: {total_purchases} | Reached checkout: {result['reached_checkout']}")
-
-    if result["sessions"] is not None:
-        result["source"] = "shopify_analytics"
-        print(f"  ✓ Shopify Analytics fetched successfully")
-    else:
-        print(f"  ⚠ Sessions not available — will use Meta pixel for sessions/ATC")
-
-    return result
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SHOPIFY: GEOGRAPHY REVENUE by Province (with proper pagination + refunds)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_shopify_revenue_by_province(since, until):
-    if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
-        return {}
-    print("  Fetching Shopify geography revenue...")
-    province_revenue = {}
-    min_id = None
-
-    while True:
-        params = {
-            "status": "any",
-            "created_at_min": f"{since}T00:00:00+05:30",
-            "created_at_max": f"{until}T23:59:59+05:30",
-            "limit": 250,
-            "fields": "id,total_price,financial_status,refunds,shipping_address",
-            "order": "id asc",
-        }
-        if min_id:
-            params["since_id"] = min_id
-
-        result = shopify_get("orders", params)
-        orders = result.get("orders", [])
-        if not orders:
-            break
-
-        for order in orders:
-            status = order.get("financial_status", "")
-            if status == "voided":
-                continue
-
-            addr = order.get("shipping_address") or {}
-            province = addr.get("province") or addr.get("city") or "Unknown"
-            revenue = flt(order.get("total_price", 0))
-
-            # Subtract refunds
-            order_refunded = 0.0
-            if status in ("refunded", "partially_refunded"):
-                for refund in order.get("refunds", []):
-                    for txn in refund.get("transactions", []):
-                        if txn.get("kind") == "refund" and txn.get("status") == "success":
-                            order_refunded += flt(txn.get("amount", 0))
-
-            net = revenue - order_refunded
-            if province not in province_revenue:
-                province_revenue[province] = {"revenue": 0.0, "orders": 0}
-            province_revenue[province]["revenue"] = round(
-                province_revenue[province]["revenue"] + net, 2
-            )
-            province_revenue[province]["orders"] += 1
-
-        min_id = orders[-1].get("id")
-        if len(orders) < 250:
-            break
-
-    return province_revenue
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN FETCH
-# ─────────────────────────────────────────────────────────────────────────────
+    gross = round(gross_sales, 2)
+    print(f"  Gross Sales: Rs.{gross} from {total_orders} orders")
+    return gross, total_orders
 
 def fetch_for_range(date_preset, since=None, until=None):
     dp = {"date_preset": date_preset} if date_preset else {"time_range": json.dumps({"since": since, "until": until})}
     label = date_preset or f"{since} to {until}"
     print(f"  Range: {label}")
 
+    # Determine since/until for Shopify calls — use IST (UTC+5:30)
+    # Use yesterday as end date to ensure complete day data only
     today_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     yesterday_ist = today_ist - timedelta(days=1)
-
     if date_preset == "last_7d":
-        sh_since = (today_ist - timedelta(days=7)).strftime("%Y-%m-%d")
+        sh_since = (yesterday_ist - timedelta(days=6)).strftime("%Y-%m-%d")
         sh_until = yesterday_ist.strftime("%Y-%m-%d")
     elif date_preset == "last_28d":
-        sh_since = (today_ist - timedelta(days=28)).strftime("%Y-%m-%d")
+        sh_since = (yesterday_ist - timedelta(days=27)).strftime("%Y-%m-%d")
         sh_until = yesterday_ist.strftime("%Y-%m-%d")
     elif date_preset == "this_month":
         sh_since = today_ist.replace(day=1).strftime("%Y-%m-%d")
-        sh_until = today_ist.strftime("%Y-%m-%d")  # include today
+        sh_until = yesterday_ist.strftime("%Y-%m-%d")
     else:
         sh_since = since or (yesterday_ist - timedelta(days=27)).strftime("%Y-%m-%d")
         sh_until = until or yesterday_ist.strftime("%Y-%m-%d")
 
-    # ── Meta Summary ─────────────────────────────────────────────
+    # ── Summary ──────────────────────────────────────────────────
     s = get(f"{ACCOUNT}/insights", {
         "fields": "spend,impressions,clicks,ctr,cpm,cpc,reach,actions,action_values,frequency",
         **dp
@@ -376,21 +169,10 @@ def fetch_for_range(date_preset, since=None, until=None):
     initiate_checkout = ga(act, "initiate_checkout")
     link_clicks = ga(act, "link_click")
 
-    # ── Shopify Revenue (source of truth) ─────────────────────────
+    # ── Shopify total revenue (overrides Meta pixel revenue if available) ──
     shopify_total_revenue, shopify_total_orders = fetch_shopify_total_revenue(sh_since, sh_until)
     revenue = shopify_total_revenue if shopify_total_revenue > 0 else meta_revenue
     revenue_source = "shopify" if shopify_total_revenue > 0 else "meta_pixel"
-    final_orders = shopify_total_orders if shopify_total_orders > 0 else num(purchases)
-
-    # ── Shopify Analytics (Sessions, ATC, Checkout) ───────────────
-    shopify_analytics = fetch_shopify_analytics(sh_since, sh_until)
-
-    # Build funnel — use Shopify Analytics if available, Meta pixel as fallback
-    funnel_sessions = shopify_analytics.get("sessions") or num(landing)
-    funnel_atc = shopify_analytics.get("add_to_cart") or num(atc)
-    funnel_checkout = shopify_analytics.get("reached_checkout") or num(initiate_checkout)
-    funnel_purchases = shopify_analytics.get("purchases") or final_orders
-    funnel_source = shopify_analytics.get("source", "meta_pixel_fallback")
 
     summary = {
         "reach": num(ins.get("reach", 0)),
@@ -408,28 +190,12 @@ def fetch_for_range(date_preset, since=None, until=None):
         "cost_per_atc": round(spend / atc, 2) if atc > 0 else 0,
         "initiate_checkout": num(initiate_checkout),
         "cost_per_initiate_checkout": round(spend / initiate_checkout, 2) if initiate_checkout > 0 else 0,
-        # Shopify source of truth
-        "conversions": final_orders,
-        "shopify_orders": shopify_total_orders,
-        "meta_pixel_purchases": num(purchases),
+        "conversions": num(purchases),
         "revenue": flt(revenue),
         "revenue_source": revenue_source,
+        "shopify_orders": shopify_total_orders,
         "roas": round(revenue / spend, 2) if spend > 0 else 0,
-        "cac": round(spend / final_orders, 2) if final_orders > 0 else 0,
-        # Store funnel (Shopify Analytics if available, Meta pixel fallback)
-        "store_funnel": {
-            "sessions": funnel_sessions,
-            "add_to_cart": funnel_atc,
-            "reached_checkout": funnel_checkout,
-            "purchases": funnel_purchases,
-            "abandoned_checkouts": shopify_analytics.get("abandoned_checkouts", 0),
-            "store_cvr": round(funnel_purchases / funnel_sessions * 100, 2) if funnel_sessions else 0,
-            "atc_rate": round(funnel_atc / funnel_sessions * 100, 2) if funnel_sessions else 0,
-            "checkout_rate": round(funnel_checkout / funnel_sessions * 100, 2) if funnel_sessions else 0,
-            "atc_to_checkout_drop": round((1 - funnel_checkout / funnel_atc) * 100, 1) if funnel_atc else 0,
-            "checkout_to_purchase_drop": round((1 - funnel_purchases / funnel_checkout) * 100, 1) if funnel_checkout else 0,
-            "source": funnel_source,
-        },
+        "cac": round(spend / purchases, 2) if purchases > 0 else 0,
     }
 
     # ── Campaigns ────────────────────────────────────────────────
@@ -445,7 +211,8 @@ def fetch_for_range(date_preset, since=None, until=None):
         ca = ci.get("actions", []); cv = ci.get("action_values", [])
         cs = flt(ci.get("spend", 0)); cp = ga(ca, "purchase")
         cr = ga(cv, "purchase"); cl = ga(ca, "landing_page_view")
-        cc = ga(ca, "add_to_cart"); cic = ga(ca, "initiate_checkout")
+        cc = ga(ca, "add_to_cart")
+        cic = ga(ca, "initiate_checkout")
         cimpr = num(ci.get("impressions", 0))
         clink_clicks = num(ga(ca, "link_click"))
         creach = num(ci.get("reach", 0))
@@ -456,7 +223,8 @@ def fetch_for_range(date_preset, since=None, until=None):
                 croas = flt(item.get("value", 0)) if isinstance(item, dict) else flt(item)
                 break
         funnel = {
-            "reach": creach, "impressions": cimpr, "link_clicks": clink_clicks,
+            "reach": creach, "impressions": cimpr,
+            "link_clicks": clink_clicks,
             "landing_views": num(cl), "add_to_cart": num(cc),
             "initiate_checkout": num(cic), "purchases": num(cp),
             "dropoffs": {
@@ -473,15 +241,23 @@ def fetch_for_range(date_preset, since=None, until=None):
             "objective": c.get("objective", ""),
             "reach": creach, "impressions": cimpr,
             "frequency": flt(ci.get("frequency", 0)),
-            "spend": cs, "link_clicks": clink_clicks,
-            "ctr": flt(ci.get("ctr", 0)), "cpm": flt(ci.get("cpm", 0)), "cpc": flt(ci.get("cpc", 0)),
-            "landing_views": num(cl), "cost_per_landing_view": round(cs / cl, 2) if cl > 0 else 0,
-            "atc": num(cc), "cost_per_atc": round(cs / cc, 2) if cc > 0 else 0,
-            "initiate_checkout": num(cic), "cost_per_initiate_checkout": round(cs / cic, 2) if cic > 0 else 0,
+            "spend": cs,
+            "link_clicks": clink_clicks,
+            "ctr": flt(ci.get("ctr", 0)),
+            "cpm": flt(ci.get("cpm", 0)),
+            "cpc": flt(ci.get("cpc", 0)),
+            "landing_views": num(cl),
+            "cost_per_landing_view": round(cs / cl, 2) if cl > 0 else 0,
+            "atc": num(cc),
+            "cost_per_atc": round(cs / cc, 2) if cc > 0 else 0,
+            "initiate_checkout": num(cic),
+            "cost_per_initiate_checkout": round(cs / cic, 2) if cic > 0 else 0,
             "atc_abandon_rate": round((1 - cp / cc) * 100, 1) if cc > 0 else 0,
             "checkout_abandon_rate": round((1 - cp / cic) * 100, 1) if cic > 0 else 0,
-            "purchases": num(cp), "revenue": flt(cr),
-            "roas": croas, "cac": round(cs / cp, 2) if cp > 0 else 0,
+            "purchases": num(cp),
+            "revenue": flt(cr),
+            "roas": croas,
+            "cac": round(cs / cp, 2) if cp > 0 else 0,
             "funnel": funnel,
         })
 
@@ -496,24 +272,37 @@ def fetch_for_range(date_preset, since=None, until=None):
     for a in asets.get("data", []):
         ai = safe_ins(a.get("insights", {}).get("data", []))
         aa = ai.get("actions", [])
-        asp = flt(ai.get("spend", 0)); ap = ga(aa, "purchase")
-        aatc = ga(aa, "add_to_cart"); aic = ga(aa, "initiate_checkout")
-        al = ga(aa, "landing_page_view"); alink = num(ga(aa, "link_click"))
-        t = a.get("targeting", {}); g = t.get("genders")
+        asp = flt(ai.get("spend", 0))
+        ap = ga(aa, "purchase")
+        aatc = ga(aa, "add_to_cart")
+        aic = ga(aa, "initiate_checkout")
+        al = ga(aa, "landing_page_view")
+        alink = num(ga(aa, "link_click"))
+        t = a.get("targeting", {})
+        g = t.get("genders")
         gender = "All" if not g else ("Male" if g == [1] else "Female" if g == [2] else "All")
         adsets.append({
             "id": a["id"], "name": a["name"], "status": a["status"],
             "daily_budget": flt(num(a.get("daily_budget", 0)) / 100),
-            "spend": asp, "impressions": num(ai.get("impressions", 0)),
-            "frequency": flt(ai.get("frequency", 0)), "link_clicks": alink,
-            "ctr": flt(ai.get("ctr", 0)), "cpm": flt(ai.get("cpm", 0)), "cpc": flt(ai.get("cpc", 0)),
-            "landing_views": num(al), "cost_per_landing_view": round(asp / al, 2) if al > 0 else 0,
-            "atc": num(aatc), "cost_per_atc": round(asp / aatc, 2) if aatc > 0 else 0,
-            "initiate_checkout": num(aic), "cost_per_initiate_checkout": round(asp / aic, 2) if aic > 0 else 0,
+            "spend": asp,
+            "impressions": num(ai.get("impressions", 0)),
+            "frequency": flt(ai.get("frequency", 0)),
+            "link_clicks": alink,
+            "ctr": flt(ai.get("ctr", 0)),
+            "cpm": flt(ai.get("cpm", 0)),
+            "cpc": flt(ai.get("cpc", 0)),
+            "landing_views": num(al),
+            "cost_per_landing_view": round(asp / al, 2) if al > 0 else 0,
+            "atc": num(aatc),
+            "cost_per_atc": round(asp / aatc, 2) if aatc > 0 else 0,
+            "initiate_checkout": num(aic),
+            "cost_per_initiate_checkout": round(asp / aic, 2) if aic > 0 else 0,
             "atc_abandon_rate": round((1 - ap / aatc) * 100, 1) if aatc > 0 else 0,
             "checkout_abandon_rate": round((1 - ap / aic) * 100, 1) if aic > 0 else 0,
-            "purchases": num(ap), "cac": round(asp / ap, 2) if ap > 0 else 0,
-            "age": f"{t.get('age_min', 18)}–{t.get('age_max', 65)}", "gender": gender,
+            "purchases": num(ap),
+            "cac": round(asp / ap, 2) if ap > 0 else 0,
+            "age": f"{t.get('age_min', 18)}–{t.get('age_max', 65)}",
+            "gender": gender,
         })
 
     # ── Ads / Creatives ──────────────────────────────────────────
@@ -526,25 +315,41 @@ def fetch_for_range(date_preset, since=None, until=None):
     ads = []
     for a in ads_raw.get("data", []):
         ai = safe_ins(a.get("insights", {}).get("data", []))
-        aa = ai.get("actions", []); av3 = ai.get("action_values", [])
-        asp2 = flt(ai.get("spend", 0)); ap2 = ga(aa, "purchase")
-        aimpr = num(ai.get("impressions", 0)); alink2 = num(ga(aa, "link_click"))
-        atc3 = ga(aa, "add_to_cart"); aic2 = ga(aa, "initiate_checkout")
-        al2 = ga(aa, "landing_page_view"); v3s = num(ga(aa, "video_view"))
+        aa = ai.get("actions", [])
+        av3 = ai.get("action_values", [])
+        asp2 = flt(ai.get("spend", 0))
+        ap2 = ga(aa, "purchase")
+        aimpr = num(ai.get("impressions", 0))
+        alink2 = num(ga(aa, "link_click"))
+        atc3 = ga(aa, "add_to_cart")
+        aic2 = ga(aa, "initiate_checkout")
+        al2 = ga(aa, "landing_page_view")
+        v3s = num(ga(aa, "video_view"))
         hook_rate = round((v3s / aimpr) * 100, 2) if aimpr > 0 else 0
         thumb_stop = round((alink2 / aimpr) * 100, 2) if aimpr > 0 else 0
         ads.append({
-            "id": a["id"], "name": a["name"], "status": a["status"], "adset": a.get("adset_id", ""),
-            "spend": asp2, "impressions": aimpr, "frequency": flt(ai.get("frequency", 0)),
-            "link_clicks": alink2, "ctr": flt(ai.get("ctr", 0)),
-            "cpm": flt(ai.get("cpm", 0)), "cpc": flt(ai.get("cpc", 0)),
-            "landing_views": num(al2), "cost_per_landing_view": round(asp2 / al2, 2) if al2 > 0 else 0,
-            "atc": num(atc3), "cost_per_atc": round(asp2 / atc3, 2) if atc3 > 0 else 0,
-            "initiate_checkout": num(aic2), "cost_per_initiate_checkout": round(asp2 / aic2, 2) if aic2 > 0 else 0,
-            "purchases": num(ap2), "cac": round(asp2 / ap2, 2) if ap2 > 0 else 0,
+            "id": a["id"], "name": a["name"], "status": a["status"],
+            "adset": a.get("adset_id", ""),
+            "spend": asp2,
+            "impressions": aimpr,
+            "frequency": flt(ai.get("frequency", 0)),
+            "link_clicks": alink2,
+            "ctr": flt(ai.get("ctr", 0)),
+            "cpm": flt(ai.get("cpm", 0)),
+            "cpc": flt(ai.get("cpc", 0)),
+            "landing_views": num(al2),
+            "cost_per_landing_view": round(asp2 / al2, 2) if al2 > 0 else 0,
+            "atc": num(atc3),
+            "cost_per_atc": round(asp2 / atc3, 2) if atc3 > 0 else 0,
+            "initiate_checkout": num(aic2),
+            "cost_per_initiate_checkout": round(asp2 / aic2, 2) if aic2 > 0 else 0,
+            "purchases": num(ap2),
+            "cac": round(asp2 / ap2, 2) if ap2 > 0 else 0,
             "revenue": flt(ga(av3, "purchase")),
             "roas": round(flt(ga(av3, "purchase")) / asp2, 2) if asp2 > 0 else 0,
-            "hook_rate": hook_rate, "thumb_stop_rate": thumb_stop, "video_views_3s": v3s,
+            "hook_rate": hook_rate,
+            "thumb_stop_rate": thumb_stop,
+            "video_views_3s": v3s,
         })
 
     # ── Audience age/gender ──────────────────────────────────────
@@ -558,9 +363,9 @@ def fetch_for_range(date_preset, since=None, until=None):
         rs = flt(r.get("spend", 0)); rp = ga(r.get("actions", []), "purchase")
         rr = ga(r.get("action_values", []), "purchase"); rreach = num(r.get("reach", 0))
         if age not in age_map:
-            age_map[age] = {"group": age, "reach": 0, "clicks": 0, "spend": 0,
-                            "purchases": 0, "revenue": 0, "frequency": 0, "count": 0}
-        age_map[age]["reach"] += rreach; age_map[age]["clicks"] += num(r.get("clicks", 0))
+            age_map[age] = {"group": age, "reach": 0, "clicks": 0, "spend": 0, "purchases": 0, "revenue": 0, "frequency": 0, "count": 0}
+        age_map[age]["reach"] += rreach
+        age_map[age]["clicks"] += num(r.get("clicks", 0))
         age_map[age]["spend"] += rs; age_map[age]["purchases"] += num(rp)
         age_map[age]["revenue"] += flt(rr); age_map[age]["frequency"] += flt(r.get("frequency", 0))
         age_map[age]["count"] += 1
@@ -593,24 +398,31 @@ def fetch_for_range(date_preset, since=None, until=None):
         })
     placements.sort(key=lambda x: x["spend"], reverse=True)
 
-    # ── Geography ────────────────────────────────────────────────
+    # ── Geography (Meta + Shopify revenue) ───────────────────────
     geo = get(f"{ACCOUNT}/insights", {
         "fields": "reach,clicks,spend,actions,action_values,impressions",
         "breakdowns": "region", "limit": 30, **dp
     })
-    shopify_geo = fetch_shopify_revenue_by_province(sh_since, sh_until)
+    # Get Shopify revenue by province
+    shopify_revenue = fetch_shopify_revenue_by_province(sh_since, sh_until)
+
     geography = []
     for r in geo.get("data", []):
         rs = flt(r.get("spend", 0)); rp = ga(r.get("actions", []), "purchase")
-        rr = ga(r.get("action_values", []), "purchase"); rimpr = num(r.get("impressions", 0))
+        rr = ga(r.get("action_values", []), "purchase")
+        rimpr = num(r.get("impressions", 0))
         region = r.get("region", "Unknown")
-        sh_data = shopify_geo.get(region, {})
-        shopify_rev = flt(sh_data.get("revenue", 0)); shopify_orders = num(sh_data.get("orders", 0))
+        # Try to match Shopify province revenue
+        sh_data = shopify_revenue.get(region, {})
+        shopify_rev = flt(sh_data.get("revenue", 0))
+        shopify_orders = num(sh_data.get("orders", 0))
+        # Use Shopify revenue if available, otherwise fall back to Meta pixel revenue
         actual_revenue = shopify_rev if shopify_rev > 0 else flt(rr)
         geography.append({
             "region": region, "reach": num(r.get("reach", 0)),
             "clicks": num(r.get("clicks", 0)), "impressions": rimpr, "spend": rs,
-            "purchases": num(rp), "revenue": actual_revenue, "shopify_orders": shopify_orders,
+            "purchases": num(rp), "revenue": actual_revenue,
+            "shopify_orders": shopify_orders,
             "revenue_source": "shopify" if shopify_rev > 0 else "meta_pixel",
             "cac": round(rs / rp, 2) if rp > 0 else 0,
             "roas": round(actual_revenue / rs, 2) if rs > 0 else 0,
@@ -619,8 +431,7 @@ def fetch_for_range(date_preset, since=None, until=None):
     geography.sort(key=lambda x: x["spend"], reverse=True)
 
     # ── Daily trend ───────────────────────────────────────────────
-    tparams = {"fields": "spend,date_start,impressions,clicks,actions,action_values",
-               "time_increment": 1, "limit": 60}
+    tparams = {"fields": "spend,date_start,impressions,clicks,actions,action_values", "time_increment": 1, "limit": 60}
     if date_preset == "last_7d": tparams["date_preset"] = "last_7d"
     elif date_preset in ("last_28d", "this_month"): tparams["date_preset"] = "last_28d"
     elif since: tparams["time_range"] = json.dumps({"since": since, "until": until})
@@ -639,7 +450,7 @@ def fetch_for_range(date_preset, since=None, until=None):
             "roas": round(dr / ds, 2) if ds > 0 else 0,
         })
 
-    # ── Hour of day ───────────────────────────────────────────────
+    # ── Hour of day (always last_7d — works with any date preset) ─
     hour_raw = get(f"{ACCOUNT}/insights", {
         "fields": "spend,impressions,clicks,actions",
         "breakdowns": "hourly_stats_aggregated_by_advertiser_time_zone",
@@ -657,8 +468,8 @@ def fetch_for_range(date_preset, since=None, until=None):
     hours.sort(key=lambda x: int(x["hour"]) if str(x["hour"]).isdigit() else 0)
 
     # ── Budget pacing ─────────────────────────────────────────────
-    today_ist_p = datetime.utcnow() + timedelta(hours=5, minutes=30)  # IST
-    days_elapsed = today_ist_p.day
+    today_dt = datetime.utcnow()
+    days_elapsed = today_dt.day
     days_remaining = 30 - days_elapsed
     daily_avg = round(summary["spend"] / days_elapsed, 2) if days_elapsed > 0 else 0
     projected_month = round(daily_avg * 30, 2)
@@ -668,24 +479,18 @@ def fetch_for_range(date_preset, since=None, until=None):
         "projected_month": projected_month,
         "purchases_to_date": summary["conversions"],
         "projected_purchases": round(summary["conversions"] / days_elapsed * 30) if days_elapsed > 0 else 0,
-        "projected_cac": round(projected_month / (summary["conversions"] / days_elapsed * 30), 2)
-                         if summary["conversions"] > 0 and days_elapsed > 0 else 0,
+        "projected_cac": round(projected_month / (summary["conversions"] / days_elapsed * 30), 2) if summary["conversions"] > 0 and days_elapsed > 0 else 0,
     }
 
     return {
         "summary": summary, "campaigns": campaigns, "adsets": adsets, "ads": ads,
-        "spendTrend": trend,
-        "audienceAge": sorted(age_map.values(), key=lambda x: x["group"]),
+        "spendTrend": trend, "audienceAge": sorted(age_map.values(), key=lambda x: x["group"]),
         "audienceGender": {"male": round(gmap["male"] / total_g * 100), "female": round(gmap["female"] / total_g * 100)},
         "geography": geography, "placements": placements, "hours": hours, "pacing": pacing,
-        "lastUpdated": (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d %H:%M IST"),
+        "lastUpdated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         "dateRange": date_preset or f"{since} to {until}",
-        "shopify_connected": bool(SHOPIFY_TOKEN and SHOPIFY_STORE),
+        "shopify_connected": bool(SHOPIFY_TOKEN and SHOPIFY_STORE)
     }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN
-# ─────────────────────────────────────────────────────────────────────────────
 
 print("Fetching last 7 days...")
 d7 = fetch_for_range("last_7d")
@@ -703,16 +508,5 @@ dm = fetch_for_range("this_month")
 with open("data_month.json", "w") as f: json.dump(dm, f, indent=2)
 print(f"  ✓ Saved data_month.json — {len(dm['campaigns'])} campaigns")
 
-print(f"\n{'='*60}")
-print(f"All done! Shopify connected: {d28['shopify_connected']}")
-print(f"Revenue source:    {d28['summary']['revenue_source']}")
-print(f"Total Sales:       ₹{d28['summary']['revenue']}")
-print(f"Shopify Orders:    {d28['summary']['shopify_orders']}")
-print(f"Funnel source:     {d28['summary']['store_funnel']['source']}")
-print(f"Sessions:          {d28['summary']['store_funnel']['sessions']}")
-print(f"Add to Cart:       {d28['summary']['store_funnel']['add_to_cart']}")
-print(f"Reached Checkout:  {d28['summary']['store_funnel']['reached_checkout']}")
-print(f"Purchases:         {d28['summary']['store_funnel']['purchases']}")
-print(f"Store CVR:         {d28['summary']['store_funnel']['store_cvr']}%")
-print(f"{'='*60}")
+print(f"\nAll done! Shopify connected: {d28['shopify_connected']}")
 print(f"Campaigns: {len(d28['campaigns'])} · Ads: {len(d28['ads'])} · Geos: {len(d28['geography'])} · Placements: {len(d28['placements'])}")
