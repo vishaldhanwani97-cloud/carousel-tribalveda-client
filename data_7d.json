@@ -1,7 +1,7 @@
 {
   "summary": {
     "reach": 2660370,
-    "impressions": 4195989,
+    "impressions": 4195990,
     "frequency": 1.58,
     "spend": 530457.7,
     "clicks": 49411,
@@ -25,14 +25,14 @@
     "store_funnel": {
       "sessions": 26677,
       "add_to_cart": 4476,
-      "reached_checkout": 2184,
+      "reached_checkout": 1153,
       "purchases": 1055,
-      "abandoned_checkouts": 0,
+      "abandoned_checkouts": 98,
       "store_cvr": 3.95,
       "atc_rate": 16.78,
-      "checkout_rate": 8.19,
-      "atc_to_checkout_drop": 51.2,
-      "checkout_to_purchase_drop": 51.7,
+      "checkout_rate": 4.32,
+      "atc_to_checkout_drop": 74.2,
+      "checkout_to_purchase_drop": 8.5,
       "source": "meta_pixel_fallback"
     }
   },
@@ -2246,7 +2246,7 @@
     {
       "day": "04-04",
       "spend": 65025.25,
-      "impressions": 682995,
+      "impressions": 682996,
       "link_clicks": 4470,
       "purchases": 114,
       "revenue": 105281.0,
@@ -2356,7 +2356,7 @@
       "region": "Maharashtra",
       "reach": 1629942,
       "clicks": 18634,
-      "impressions": 2245217,
+      "impressions": 2245218,
       "spend": 190025.54,
       "purchases": 0,
       "revenue": 308092.35,
@@ -2733,7 +2733,7 @@
       "platform": "facebook",
       "position": "facebook_reels",
       "spend": 96591.58,
-      "impressions": 573341,
+      "impressions": 573342,
       "clicks": 8915,
       "reach": 285523,
       "purchases": 157,
@@ -3141,7 +3141,7 @@
     {
       "hour": "20",
       "spend": 30061.95,
-      "impressions": 254002,
+      "impressions": 254003,
       "clicks": 3175,
       "purchases": 52,
       "cac": 578.11
@@ -3181,7 +3181,7 @@
     "projected_purchases": 6330,
     "projected_cac": 502.8
   },
-  "lastUpdated": "2026-04-05 18:54 IST",
+  "lastUpdated": "2026-04-05 18:58 IST",
   "dateRange": "last_7d",
   "shopify_connected": true
 }

@@ -1,9 +1,9 @@
 {
   "summary": {
     "reach": 7949533,
-    "impressions": 18537644,
+    "impressions": 18537648,
     "frequency": 2.33,
-    "spend": 2182976.77,
+    "spend": 2182976.78,
     "clicks": 202441,
     "link_clicks": 146556,
     "ctr": 1.09,
@@ -25,14 +25,14 @@
     "store_funnel": {
       "sessions": 109100,
       "add_to_cart": 17294,
-      "reached_checkout": 8455,
+      "reached_checkout": 5336,
       "purchases": 3848,
-      "abandoned_checkouts": 0,
+      "abandoned_checkouts": 1488,
       "store_cvr": 3.53,
       "atc_rate": 15.85,
-      "checkout_rate": 7.75,
-      "atc_to_checkout_drop": 51.1,
-      "checkout_to_purchase_drop": 54.5,
+      "checkout_rate": 4.89,
+      "atc_to_checkout_drop": 69.1,
+      "checkout_to_purchase_drop": 27.9,
       "source": "meta_pixel_fallback"
     }
   },
@@ -301,7 +301,7 @@
       "status": "ACTIVE",
       "objective": "OUTCOME_SALES",
       "reach": 230526,
-      "impressions": 656945,
+      "impressions": 656946,
       "frequency": 2.85,
       "spend": 221834.43,
       "link_clicks": 10207,
@@ -322,7 +322,7 @@
       "cac": 614.5,
       "funnel": {
         "reach": 230526,
-        "impressions": 656945,
+        "impressions": 656946,
         "link_clicks": 10207,
         "landing_views": 7847,
         "add_to_cart": 2006,
@@ -387,9 +387,9 @@
       "status": "ACTIVE",
       "objective": "OUTCOME_AWARENESS",
       "reach": 5331370,
-      "impressions": 6906586,
+      "impressions": 6906588,
       "frequency": 1.3,
-      "spend": 13972.72,
+      "spend": 13972.73,
       "link_clicks": 10,
       "ctr": 0.09,
       "cpm": 2.02,
@@ -408,7 +408,7 @@
       "cac": 0,
       "funnel": {
         "reach": 5331370,
-        "impressions": 6906586,
+        "impressions": 6906588,
         "link_clicks": 10,
         "landing_views": 0,
         "add_to_cart": 4,
@@ -731,7 +731,7 @@
       "status": "ACTIVE",
       "objective": "OUTCOME_SALES",
       "reach": 701182,
-      "impressions": 1880445,
+      "impressions": 1880446,
       "frequency": 2.68,
       "spend": 365111.53,
       "link_clicks": 22675,
@@ -752,7 +752,7 @@
       "cac": 691.5,
       "funnel": {
         "reach": 701182,
-        "impressions": 1880445,
+        "impressions": 1880446,
         "link_clicks": 22675,
         "landing_views": 18024,
         "add_to_cart": 2556,
@@ -2456,7 +2456,7 @@
     {
       "day": "04-04",
       "spend": 65025.25,
-      "impressions": 682995,
+      "impressions": 682996,
       "link_clicks": 4470,
       "purchases": 114,
       "revenue": 105281.0,
@@ -2495,7 +2495,7 @@
       "group": "35-44",
       "reach": 1247629,
       "clicks": 50922,
-      "spend": 588045.76,
+      "spend": 588045.77,
       "purchases": 929,
       "revenue": 853254.3,
       "frequency": 9.16,
@@ -3448,7 +3448,7 @@
     {
       "hour": "20",
       "spend": 30061.95,
-      "impressions": 254002,
+      "impressions": 254003,
       "clicks": 3175,
       "purchases": 52,
       "cac": 578.11
@@ -3481,14 +3481,14 @@
   "pacing": {
     "days_elapsed": 5,
     "days_remaining": 25,
-    "spend_to_date": 2182976.77,
-    "daily_avg": 436595.35,
-    "projected_month": 13097860.5,
+    "spend_to_date": 2182976.78,
+    "daily_avg": 436595.36,
+    "projected_month": 13097860.8,
     "purchases_to_date": 3848,
     "projected_purchases": 23088,
     "projected_cac": 567.3
   },
-  "lastUpdated": "2026-04-05 18:55 IST",
+  "lastUpdated": "2026-04-05 18:59 IST",
   "dateRange": "last_28d",
   "shopify_connected": true
 }
