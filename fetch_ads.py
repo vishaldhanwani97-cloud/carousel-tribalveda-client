@@ -147,102 +147,180 @@ def fetch_shopify_total_revenue(since, until):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_shopify_analytics(since, until):
+    """
+    Fetch store funnel directly from Shopify using ShopifyQL (GraphQL Analytics API).
+    This is the same query language Shopify uses internally for their Analytics dashboard.
+    Requires read_analytics scope — which is already enabled on this token.
+
+    Returns sessions, add_to_cart, reached_checkout, purchases direct from Shopify.
+    """
     print(f"  Fetching Shopify Analytics ({since} → {until})...")
     result = {
         "sessions": None,
         "add_to_cart": None,
         "reached_checkout": None,
         "purchases": 0,
+        "abandoned_checkouts": 0,
         "source": "meta_pixel_fallback",
     }
 
-    # ── Method 1: Shopify Analytics API (REST) ────────────────────
-    # Requires read_analytics scope
-    # Fetches the "Online store sessions" and funnel metrics
-    try:
-        # Shopify Analytics reports endpoint
-        url = (
-            f"https://{SHOPIFY_STORE}/admin/api/2024-01/reports.json"
-            f"?since_id=0&limit=250"
-        )
-        req = urllib.request.Request(
-            url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN}
-        )
-        with urllib.request.urlopen(req) as r:
-            reports_data = json.loads(r.read())
-
-        reports = reports_data.get("reports", [])
-        print(f"    Available Shopify reports: {len(reports)}")
-        for rpt in reports[:5]:
-            print(f"      - {rpt.get('name')} (id: {rpt.get('id')})")
-
-    except Exception as e:
-        print(f"    Reports API not accessible: {e}")
-        reports = []
-
-    # ── Method 2: GraphQL Analytics API ──────────────────────────
-    # Try fetching store sessions via GraphQL
-    # This is available on Shopify Basic+ plans
-    gql = """
-    {
-      shop {
-        name
-        primaryDomain { url }
-      }
-    }
+    # ── ShopifyQL: Sessions ───────────────────────────────────────
+    # Fetches online store sessions for the date range
+    sessions_query = f"""
+    {{
+      shopifyqlQuery(query: "FROM sessions SINCE {since} UNTIL {until} SELECT SUM(sessions)") {{
+        __typename
+        ... on TableResponse {{
+          tableData {{
+            rowData
+            columns {{ name dataType }}
+          }}
+        }}
+        ... on ParseError {{
+          parseErrors {{ code message }}
+        }}
+      }}
+    }}
     """
-    gql_result = shopify_graphql(gql)
-    shop_info = gql_result.get("data", {}).get("shop", {})
-    if shop_info:
-        print(f"    Shop: {shop_info.get('name')} — {shop_info.get('primaryDomain', {}).get('url')}")
-
-    # ── Method 3: Fetch purchase count from orders (always works) ─
-    total_purchases = 0
-    min_id = None
-    while True:
-        params = {
-            "status": "any",
-            "created_at_min": f"{since}T00:00:00+05:30",
-            "created_at_max": f"{until}T23:59:59+05:30",
-            "limit": 250,
-            "fields": "id,financial_status",
-            "order": "id asc",
-        }
-        if min_id:
-            params["since_id"] = min_id
-        orders = shopify_get("orders", params).get("orders", [])
-        if not orders:
-            break
-        for order in orders:
-            if order.get("financial_status") != "voided":
-                total_purchases += 1
-        min_id = orders[-1].get("id")
-        if len(orders) < 250:
-            break
-
-    result["purchases"] = total_purchases
-    print(f"    Shopify purchases (from orders): {total_purchases}")
-
-    # ── Method 4: Abandoned checkouts (proxy for reached_checkout) ─
-    # Shopify tracks abandoned checkouts separately
     try:
-        checkouts_result = shopify_get("checkouts", {
-            "created_at_min": f"{since}T00:00:00+05:30",
-            "created_at_max": f"{until}T23:59:59+05:30",
-            "limit": 250,
-            "status": "open",  # open = abandoned (not completed)
-        })
-        abandoned = len(checkouts_result.get("checkouts", []))
-        # reached_checkout = completed purchases + abandoned checkouts
-        reached_checkout = total_purchases + abandoned
-        result["reached_checkout"] = reached_checkout
-        result["abandoned_checkouts"] = abandoned
-        print(f"    Reached checkout: {reached_checkout} ({abandoned} abandoned + {total_purchases} completed)")
+        sessions_result = shopify_graphql(sessions_query)
+        errors = sessions_result.get("errors")
+        if errors:
+            print(f"    Sessions GraphQL error: {errors}")
+        else:
+            table = (sessions_result.get("data", {})
+                     .get("shopifyqlQuery", {})
+                     .get("tableData", {}))
+            rows = table.get("rowData", [])
+            if rows:
+                result["sessions"] = num(rows[0][0]) if rows[0] else None
+                print(f"    Sessions: {result['sessions']}")
+            else:
+                print(f"    Sessions: no rows returned — {sessions_result}")
     except Exception as e:
-        print(f"    Abandoned checkouts: {e}")
+        print(f"    Sessions query failed: {e}")
 
-    if result["reached_checkout"] or result["sessions"]:
+    # ── ShopifyQL: Add to Cart ────────────────────────────────────
+    atc_query = f"""
+    {{
+      shopifyqlQuery(query: "FROM sessions SINCE {since} UNTIL {until} SELECT SUM(add_to_cart_sessions)") {{
+        __typename
+        ... on TableResponse {{
+          tableData {{
+            rowData
+            columns {{ name dataType }}
+          }}
+        }}
+        ... on ParseError {{
+          parseErrors {{ code message }}
+        }}
+      }}
+    }}
+    """
+    try:
+        atc_result = shopify_graphql(atc_query)
+        table = (atc_result.get("data", {})
+                 .get("shopifyqlQuery", {})
+                 .get("tableData", {}))
+        rows = table.get("rowData", [])
+        if rows:
+            result["add_to_cart"] = num(rows[0][0]) if rows[0] else None
+            print(f"    Add to Cart: {result['add_to_cart']}")
+    except Exception as e:
+        print(f"    ATC query failed: {e}")
+
+    # ── ShopifyQL: Reached Checkout ───────────────────────────────
+    checkout_query = f"""
+    {{
+      shopifyqlQuery(query: "FROM sessions SINCE {since} UNTIL {until} SELECT SUM(checkout_sessions)") {{
+        __typename
+        ... on TableResponse {{
+          tableData {{
+            rowData
+            columns {{ name dataType }}
+          }}
+        }}
+        ... on ParseError {{
+          parseErrors {{ code message }}
+        }}
+      }}
+    }}
+    """
+    try:
+        checkout_result = shopify_graphql(checkout_query)
+        table = (checkout_result.get("data", {})
+                 .get("shopifyqlQuery", {})
+                 .get("tableData", {}))
+        rows = table.get("rowData", [])
+        if rows:
+            result["reached_checkout"] = num(rows[0][0]) if rows[0] else None
+            print(f"    Reached Checkout: {result['reached_checkout']}")
+    except Exception as e:
+        print(f"    Checkout query failed: {e}")
+
+    # ── ShopifyQL: Purchases (converted sessions) ─────────────────
+    purchases_query = f"""
+    {{
+      shopifyqlQuery(query: "FROM sessions SINCE {since} UNTIL {until} SELECT SUM(orders_placed)") {{
+        __typename
+        ... on TableResponse {{
+          tableData {{
+            rowData
+            columns {{ name dataType }}
+          }}
+        }}
+        ... on ParseError {{
+          parseErrors {{ code message }}
+        }}
+      }}
+    }}
+    """
+    try:
+        purchases_result = shopify_graphql(purchases_query)
+        table = (purchases_result.get("data", {})
+                 .get("shopifyqlQuery", {})
+                 .get("tableData", {}))
+        rows = table.get("rowData", [])
+        if rows and rows[0]:
+            result["purchases"] = num(rows[0][0])
+            print(f"    Purchases (ShopifyQL): {result['purchases']}")
+    except Exception as e:
+        print(f"    Purchases query failed: {e}")
+
+    # ── Fallback: get purchases from orders API if ShopifyQL gave 0 ─
+    if not result["purchases"]:
+        print("    Falling back to orders API for purchase count...")
+        total_purchases = 0
+        min_id = None
+        while True:
+            params = {
+                "status": "any",
+                "created_at_min": f"{since}T00:00:00+05:30",
+                "created_at_max": f"{until}T23:59:59+05:30",
+                "limit": 250,
+                "fields": "id,financial_status",
+                "order": "id asc",
+            }
+            if min_id:
+                params["since_id"] = min_id
+            orders = shopify_get("orders", params).get("orders", [])
+            if not orders:
+                break
+            for order in orders:
+                if order.get("financial_status") != "voided":
+                    total_purchases += 1
+            min_id = orders[-1].get("id")
+            if len(orders) < 250:
+                break
+        result["purchases"] = total_purchases
+        print(f"    Purchases (orders API fallback): {total_purchases}")
+
+    # Mark source
+    if result["sessions"] is not None:
         result["source"] = "shopify_analytics"
+        print(f"  ✓ Shopify Analytics fetched successfully")
+    else:
+        print(f"  ⚠ ShopifyQL returned no session data — funnel will use Meta pixel")
 
     return result
 
