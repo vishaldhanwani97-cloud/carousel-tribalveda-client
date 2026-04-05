@@ -30,7 +30,7 @@ def shopify_get(endpoint, params={}):
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return {}
     qs = urllib.parse.urlencode(params)
-    url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}.json?{qs}"
+    url = f"https://{SHOPIFY_STORE}/admin/api/2024-10/{endpoint}.json?{qs}"
     req = urllib.request.Request(url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
     try:
         with urllib.request.urlopen(req) as r:
@@ -43,7 +43,7 @@ def shopify_graphql(query):
     """Run a GraphQL query against Shopify Admin API"""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         return {}
-    url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/graphql.json"
+    url = f"https://{SHOPIFY_STORE}/admin/api/2024-10/graphql.json"
     data = json.dumps({"query": query}).encode("utf-8")
     req = urllib.request.Request(
         url, data=data,
